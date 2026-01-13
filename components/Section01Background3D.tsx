@@ -36,9 +36,7 @@ const MorphParticles = ({ isTargeted, targetId, isMobile }: { isTargeted: boolea
 
         if (!targetMesh) targetMesh = nodes.morph_section01 as THREE.Mesh;
         if (!targetMesh || !targetMesh.geometry) return null;
-
-        const g = targetMesh.geometry.clone();
-        const attrs = g.attributes;
+        const attrs = targetMesh.geometry.attributes;
 
         const pBase = attrs._p_07 || attrs._P_07;
         const cBase = attrs._color_07 || attrs._COLOR_07;
@@ -51,30 +49,43 @@ const MorphParticles = ({ isTargeted, targetId, isMobile }: { isTargeted: boolea
         const pPrev = attrs[`_p_${ids.prev}`] || attrs[`_P_${ids.prev}`] || attrs._p_01 || attrs._P_01;
         const cPrev = attrs[`_color_${ids.prev}`] || attrs[`_COLOR_${ids.prev}`] || attrs._color_01 || attrs._COLOR_01;
 
-        if (pBase && pTarget && pPrev) {
-            g.setAttribute('aInstancePosition', pBase);
-            g.setAttribute('aInstanceTargetPosition', pTarget);
-            g.setAttribute('aInstancePrevTargetPosition', pPrev);
-        }
+        // Mobile Density Reduction: Sample only half the particles
+        const step = isMobile ? 2 : 1;
+        const count = pBase.count;
+        const finalCount = Math.floor(count / step);
 
-        if (cBase) g.setAttribute('aInstanceColor', cBase);
-        if (cTarget) g.setAttribute('aInstanceTargetColor', cTarget);
-        if (cPrev) g.setAttribute('aInstancePrevTargetColor', cPrev);
+        const g = new THREE.BufferGeometry();
 
-        if (pBase) {
-            const count = pBase.count;
-            const sizes = new Float32Array(count);
-            const perspectives = new Float32Array(count);
-            for (let i = 0; i < count; i++) {
-                sizes[i] = 0.5 + Math.random() * 0.5; // Scale multiplier for the sphere
-                perspectives[i] = 1.0; // Unused in mesh mode but kept for compat
+        const filterAttr = (attr: THREE.BufferAttribute) => {
+            if (!attr) return null;
+            const itemSize = attr.itemSize;
+            const newArray = new Float32Array(finalCount * itemSize);
+            for (let i = 0; i < finalCount; i++) {
+                for (let j = 0; j < itemSize; j++) {
+                    newArray[i * itemSize + j] = attr.array[(i * step) * itemSize + j];
+                }
             }
-            g.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+            return new THREE.BufferAttribute(newArray, itemSize);
+        };
+
+        if (pBase && pTarget && pPrev) {
+            g.setAttribute('aInstancePosition', filterAttr(pBase as THREE.BufferAttribute)!);
+            g.setAttribute('aInstanceTargetPosition', filterAttr(pTarget as THREE.BufferAttribute)!);
+            g.setAttribute('aInstancePrevTargetPosition', filterAttr(pPrev as THREE.BufferAttribute)!);
         }
 
-        g.setIndex(null);
+        if (cBase) g.setAttribute('aInstanceColor', filterAttr(cBase as THREE.BufferAttribute)!);
+        if (cTarget) g.setAttribute('aInstanceTargetColor', filterAttr(cTarget as THREE.BufferAttribute)!);
+        if (cPrev) g.setAttribute('aInstancePrevTargetColor', filterAttr(cPrev as THREE.BufferAttribute)!);
+
+        const sizes = new Float32Array(finalCount);
+        for (let i = 0; i < finalCount; i++) {
+            sizes[i] = 0.5 + Math.random() * 0.5;
+        }
+        g.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
         return g;
-    }, [scene, ids]);
+    }, [scene, ids, isMobile]);
 
     const uniforms = useMemo(() => ({
         uMorph: { value: 0 },
@@ -140,9 +151,66 @@ const MorphParticles = ({ isTargeted, targetId, isMobile }: { isTargeted: boolea
 
     const instanceCount = geometry?.attributes.aInstancePosition?.count || 0;
 
+    // Mobile Optimization: Use Points instead of instancedMesh for massive performance gain
+    if (isMobile) {
+        return (
+            <points ref={pointsRef as any} geometry={geometry}>
+                <shaderMaterial
+                    ref={materialRef}
+                    transparent
+                    uniforms={uniforms}
+                    vertexShader={`
+                        attribute vec3 aInstancePosition;
+                        attribute vec3 aInstanceTargetPosition;
+                        attribute vec3 aInstancePrevTargetPosition;
+                        attribute vec3 aInstanceColor;
+                        attribute vec3 aInstanceTargetColor;
+                        attribute vec3 aInstancePrevTargetColor;
+                        attribute float aSize;
+
+                        varying vec3 vColor;
+                        varying float vAlpha;
+
+                        uniform float uMorph;
+                        uniform float uTargetMorph;
+                        uniform vec3 uMouse;
+                        uniform float uExplosion;
+                        uniform float uTime;
+
+                        void main() {
+                            vec3 stageTargetPos = mix(aInstancePrevTargetPosition, aInstanceTargetPosition, uTargetMorph);
+                            vec3 instanceCenter = mix(aInstancePosition, stageTargetPos, uMorph);
+                            
+                            // Simplified reaction for mobile
+                            vec3 dir = instanceCenter - uMouse;
+                            float dist = length(dir);
+                            float force = 1.0 - smoothstep(0.0, 2.0, dist);
+                            vec3 finalPos = instanceCenter + (normalize(dir) * uExplosion * force * 0.5);
+
+                            vColor = mix(aInstanceColor, mix(aInstancePrevTargetColor, aInstanceTargetColor, uTargetMorph), uMorph);
+                            vAlpha = 0.8;
+
+                            vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+                            gl_PointSize = (aSize * 15.0) * (300.0 / -mvPosition.z);
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `}
+                    fragmentShader={`
+                        varying vec3 vColor;
+                        varying float vAlpha;
+                        void main() {
+                            if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+                            gl_FragColor = vec4(vColor * 1.5, vAlpha);
+                        }
+                    `}
+                />
+            </points>
+        );
+    }
+
     return (
         <instancedMesh ref={pointsRef as any} args={[undefined, undefined, instanceCount]}>
-            <icosahedronGeometry args={[0.02, 1]} >
+            <icosahedronGeometry args={[0.02, 1]}>
                 <instancedBufferAttribute attach="attributes-aInstancePosition" args={[geometry.attributes.aInstancePosition.array, 3]} />
                 <instancedBufferAttribute attach="attributes-aInstanceTargetPosition" args={[geometry.attributes.aInstanceTargetPosition.array, 3]} />
                 <instancedBufferAttribute attach="attributes-aInstancePrevTargetPosition" args={[geometry.attributes.aInstancePrevTargetPosition.array, 3]} />
@@ -242,7 +310,7 @@ const MorphParticles = ({ isTargeted, targetId, isMobile }: { isTargeted: boolea
 };
 
 const TrailParticles = ({ isMobile }: { isMobile: boolean }) => {
-    const count = isMobile ? 150 : 400; // Significantly reduced for mobile
+    const count = isMobile ? 50 : 250; // Massively reduced for mobile
     const meshRef = useRef<THREE.Points>(null);
     const materialRef = useRef<THREE.ShaderMaterial>(null);
 
