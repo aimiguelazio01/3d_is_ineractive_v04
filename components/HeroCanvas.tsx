@@ -318,7 +318,7 @@ const Scene = ({ scrollY, isActive = true, isMobile = false }: { scrollY?: Motio
     return (
         <>
             {shCam ? (
-                <PerspectiveCamera ref={cameraRef} makeDefault fov={isMobile ? 80 : shCam.fov} near={shCam.near} far={shCam.far} />
+                <PerspectiveCamera ref={cameraRef} makeDefault fov={isMobile ? 110 : shCam.fov} near={shCam.near} far={shCam.far} />
             ) : (
                 <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 0, 10]} fov={50} />
             )}
