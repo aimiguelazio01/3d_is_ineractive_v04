@@ -315,10 +315,18 @@ const Scene = ({ scrollY, isActive = true, isMobile = false }: { scrollY?: Motio
         }
     });
 
+    // Explicitly update projection matrix when FOV changes, common issue in Three.js
+    React.useLayoutEffect(() => {
+        if (cameraRef.current) {
+            cameraRef.current.fov = isMobile ? 120 : (shCam?.fov || 50);
+            cameraRef.current.updateProjectionMatrix();
+        }
+    }, [isMobile, shCam]);
+
     return (
         <>
             {shCam ? (
-                <PerspectiveCamera ref={cameraRef} makeDefault fov={isMobile ? 110 : shCam.fov} near={shCam.near} far={shCam.far} />
+                <PerspectiveCamera ref={cameraRef} makeDefault fov={isMobile ? 120 : shCam.fov} near={shCam.near} far={shCam.far} />
             ) : (
                 <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 0, 10]} fov={50} />
             )}
