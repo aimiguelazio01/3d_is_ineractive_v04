@@ -139,8 +139,10 @@ const OrbitingParticles = ({ count = 60, seed = "v2", isActive = true, isMobile 
                     fragmentShader={`
                         uniform vec3 uColor;
                         void main() {
-                            if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
-                            gl_FragColor = vec4(uColor, 1.0);
+                            float d = length(gl_PointCoord - vec2(0.5));
+                            if (d > 0.5) discard;
+                            float strength = 1.0 - smoothstep(0.0, 0.5, d);
+                            gl_FragColor = vec4(uColor * 2.0, strength); // More vibrant glow
                         }
                     `}
                 />
@@ -183,17 +185,13 @@ const Model = ({ isActive = true, isMobile = false }: { isActive?: boolean; isMo
                 const name = mesh.name.toLowerCase();
 
                 if (name.startsWith('sh_logo')) {
-                    // Aluminum material - Lighter version for mobile
-                    mesh.material = isMobile ? new THREE.MeshStandardMaterial({
-                        color: '#f0f0f0',
-                        metalness: 0.8,
-                        roughness: 0.2,
-                        envMapIntensity: 1.0,
-                    }) : new THREE.MeshPhysicalMaterial({
+                    // Aluminum material - Balanced for mobile quality
+                    mesh.material = new THREE.MeshPhysicalMaterial({
                         color: '#f0f0f0',
                         metalness: 1.0,
-                        roughness: 0.1,
-                        envMapIntensity: 2.5,
+                        roughness: isMobile ? 0.2 : 0.1,
+                        envMapIntensity: isMobile ? 1.5 : 2.5,
+                        clearcoat: isMobile ? 0 : 0.5, // Save some perf on mobile
                     });
                     mesh.castShadow = !isMobile;
                 } else if (name.includes('sh_background') || name.includes('sh_backdrop')) {
@@ -338,9 +336,9 @@ const Scene = ({ scrollY, isActive = true, isMobile = false }: { scrollY?: Motio
             <primitive object={new THREE.Object3D()} attach="target" position={[spotLightPos.x, spotLightPos.y - 12, spotLightPos.z]} />
 
             <Model isActive={isActive} isMobile={isMobile} />
-            <OrbitingParticles count={isMobile ? 25 : 60} isActive={isActive} isMobile={isMobile} />
+            <OrbitingParticles count={isMobile ? 35 : 60} isActive={isActive} isMobile={isMobile} />
 
-            <Environment preset="city" environmentIntensity={isMobile ? 0.2 : 0.4} />
+            <Environment preset="city" environmentIntensity={isMobile ? 0.35 : 0.4} />
             {!isMobile && <fog attach="fog" args={['#000000', 5, 35]} />}
 
             {!isMobile && (
@@ -390,9 +388,9 @@ const HeroCanvas: React.FC<{ scrollY?: MotionValue<number> }> = ({ scrollY }) =>
         >
             <Canvas
                 shadows={!isFirefox && !isMobile}
-                dpr={isMobile ? 1 : (isFirefox ? 1 : [1, 2])}
+                dpr={isMobile ? [1, 1.5] : (isFirefox ? 1 : [1, 2])}
                 gl={{
-                    antialias: false,
+                    antialias: true, // Back to true for smooth edges
                     toneMapping: THREE.ACESFilmicToneMapping,
                     powerPreference: "high-performance",
                     stencil: false,
