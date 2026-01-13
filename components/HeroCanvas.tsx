@@ -6,25 +6,22 @@ import { motion, useTransform, useMotionValue, MotionValue, useMotionValueEvent 
 import * as THREE from 'three';
 import { createNoise3D } from 'simplex-noise';
 
-const OrbitingParticles = ({ count = 60, seed = "v2", isActive = true }: { count?: number; seed?: string; isActive?: boolean }) => {
+const OrbitingParticles = ({ count = 60, seed = "v2", isActive = true, isMobile = false }: { count?: number; seed?: string; isActive?: boolean; isMobile?: boolean }) => {
     const { scene } = useGLTF('/assets/3d/sh/sh_geo.gltf');
-    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const meshRef = useRef<any>(null);
     const dummy = useMemo(() => new THREE.Object3D(), []);
     const noise3D = useMemo(() => createNoise3D(), []);
 
-    // Find the logo object to orbit around
     const logoPos = useMemo(() => {
-        // Specifically look for sh_logo01 as requested
         const logo = scene.getObjectByName('sh_logo01') || scene.getObjectByName('sh_logo_m01');
         if (logo) {
             const pos = logo.position.clone();
-            pos.y -= 2.2; // Lower the orbit further
+            pos.y -= 2.2;
             return pos;
         }
         return new THREE.Vector3(0, -2.2, 0);
     }, [scene]);
 
-    // Create particle initial positions and random phase offsets
     const particleData = useMemo(() => {
         const temp = [];
         for (let i = 0; i < count; i++) {
@@ -44,22 +41,13 @@ const OrbitingParticles = ({ count = 60, seed = "v2", isActive = true }: { count
                 offset: Math.random() * 100,
                 randomScale: 0.2 + Math.random() * 0.8,
                 color: (() => {
-                    const g = 0.5 + Math.random() * 0.5; // range 0.5 to 1.0 (50% grey to white)
+                    const g = 0.5 + Math.random() * 0.5;
                     return new THREE.Color(g, g, g);
                 })()
             });
         }
         return temp;
-    }, [count, seed]);
-
-    useEffect(() => {
-        if (meshRef.current) {
-            particleData.forEach((p, i) => {
-                meshRef.current!.setColorAt(i, p.color);
-            });
-            meshRef.current.instanceColor!.needsUpdate = true;
-        }
-    }, [particleData]);
+    }, [count]);
 
     const explosionFactor = useRef(0);
 
@@ -69,97 +57,108 @@ const OrbitingParticles = ({ count = 60, seed = "v2", isActive = true }: { count
         const dt = Math.min(delta, 0.1);
         const { mouse } = state;
 
-        // 0. Check if mouse is in center to trigger explosion
-        const mouseDistanceFromCenter = Math.sqrt(mouse.x * mouse.x + mouse.y * mouse.y);
-        const isNearCenter = mouseDistanceFromCenter < 0.4;
-
-        // Target 1.0 for explosion, 0.0 for normal (Frame-rate independent lerp)
+        const isNearCenter = isMobile ? false : Math.sqrt(mouse.x * mouse.x + mouse.y * mouse.y) < 0.4;
         const explosionAlpha = 1 - Math.exp(-10 * dt);
         explosionFactor.current = THREE.MathUtils.lerp(explosionFactor.current, isNearCenter ? 1.0 : 0.0, explosionAlpha);
 
-        // Calculate mouse interaction point in 3D space
-        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -logoPos.z);
-        const mousePoint = new THREE.Vector3();
-        state.raycaster.ray.intersectPlane(plane, mousePoint);
-        const localMouse = mousePoint.clone().sub(logoPos);
-
         if (meshRef.current) {
             particleData.forEach((p, i) => {
-                // 1. Target Position (Base Orbit + Noise)
                 const nx = noise3D(p.basePos.x * 0.5, p.basePos.y * 0.5, t * 0.25 + p.offset);
                 const ny = noise3D(p.basePos.y * 0.5, p.basePos.z * 0.5, t * 0.25 + p.offset);
                 const nz = noise3D(p.basePos.z * 0.5, p.basePos.x * 0.5, t * 0.25 + p.offset);
 
-                const noiseScale = 0.3;
                 let targetPos = new THREE.Vector3(
-                    p.basePos.x + nx * noiseScale,
-                    p.basePos.y + ny * noiseScale,
-                    p.basePos.z + nz * noiseScale
+                    p.basePos.x + nx * 0.3,
+                    p.basePos.y + ny * 0.3,
+                    p.basePos.z + nz * 0.3
                 );
                 targetPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), t * 0.4);
 
-                // Apply Explosion: blast particles outwards away from logo center
                 if (explosionFactor.current > 0.001) {
-                    const explosionDir = targetPos.clone().normalize();
-                    // Blast range: move particles towards the viewport borders (reduced from 12.0)
-                    const blastTarget = explosionDir.multiplyScalar(4.5);
-                    targetPos.lerp(blastTarget, explosionFactor.current);
+                    targetPos.lerp(targetPos.clone().normalize().multiplyScalar(4.5), explosionFactor.current);
                 }
 
-                // 2. Spring Physics Logic
-                // Increase stiffness for snappier snapping (ULTRA responsive)
-                const stiffness = isNearCenter ? 25.0 : 70.0;
-                const damping = 0.82;
-
-                const springForce = targetPos.clone().sub(p.currentPos).multiplyScalar(stiffness);
+                const springForce = targetPos.clone().sub(p.currentPos).multiplyScalar(isNearCenter ? 25.0 : 70.0);
                 p.velocity.add(springForce.multiplyScalar(dt));
-                // Frame-rate independent damping
-                p.velocity.multiplyScalar(Math.pow(damping, dt * 60));
+                p.velocity.multiplyScalar(Math.pow(0.82, dt * 60));
 
-                // 3. Mouse Interaction (Repulsion) - Reduced during explosion
-                const dist = p.currentPos.distanceTo(localMouse);
-                const forceRange = 2.5;
-                const interactionForce = Math.max(0, 1 - dist / forceRange) * (1 - explosionFactor.current);
-
-                if (interactionForce > 0) {
-                    const repulsionDir = p.currentPos.clone().sub(localMouse).normalize();
-                    p.velocity.addScaledVector(repulsionDir, interactionForce * 35.0 * dt);
+                if (!isMobile) {
+                    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -logoPos.z);
+                    const mousePoint = new THREE.Vector3();
+                    state.raycaster.ray.intersectPlane(plane, mousePoint);
+                    const localMouse = mousePoint.sub(logoPos);
+                    const dist = p.currentPos.distanceTo(localMouse);
+                    const interactionForce = Math.max(0, 1 - dist / 2.5) * (1 - explosionFactor.current);
+                    if (interactionForce > 0) {
+                        p.velocity.addScaledVector(p.currentPos.clone().sub(localMouse).normalize(), interactionForce * 35.0 * dt);
+                    }
                 }
 
-                // 4. Update Position
                 p.currentPos.addScaledVector(p.velocity, dt);
 
-                // 5. Apply transforms
-                dummy.position.copy(p.currentPos);
-
-                const pulsingScale = 0.8 + Math.sin(t * 2 + p.offset) * 0.2;
-                const mouseScaleBoost = 1.0 + interactionForce * 3.0;
-                // Scale stays small or grows slightly during explosion
-                dummy.scale.setScalar(pulsingScale * p.randomScale * mouseScaleBoost);
-
-                dummy.updateMatrix();
-                meshRef.current!.setMatrixAt(i, dummy.matrix);
+                if (isMobile) {
+                    const pos = meshRef.current.geometry.attributes.position;
+                    pos.setXYZ(i, p.currentPos.x, p.currentPos.y, p.currentPos.z);
+                } else {
+                    dummy.position.copy(p.currentPos);
+                    dummy.scale.setScalar((0.8 + Math.sin(t * 2 + p.offset) * 0.2) * p.randomScale);
+                    dummy.updateMatrix();
+                    meshRef.current.setMatrixAt(i, dummy.matrix);
+                }
             });
 
-            meshRef.current.instanceMatrix.needsUpdate = true;
+            if (isMobile) {
+                meshRef.current.geometry.attributes.position.needsUpdate = true;
+            } else {
+                meshRef.current.instanceMatrix.needsUpdate = true;
+            }
         }
     });
+
+    if (isMobile) {
+        const pos = new Float32Array(count * 3);
+        const sizes = new Float32Array(count);
+        for (let i = 0; i < count; i++) sizes[i] = 1.0;
+        return (
+            <points ref={meshRef} position={logoPos}>
+                <bufferGeometry>
+                    <bufferAttribute attach="attributes-position" count={count} array={pos} itemSize={3} />
+                    <bufferAttribute attach="attributes-aSize" count={count} array={sizes} itemSize={1} />
+                </bufferGeometry>
+                <shaderMaterial
+                    transparent
+                    uniforms={{ uColor: { value: new THREE.Color('#ffffff') } }}
+                    vertexShader={`
+                        attribute float aSize;
+                        void main() {
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            gl_PointSize = aSize * (150.0 / -mvPosition.z);
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `}
+                    fragmentShader={`
+                        uniform vec3 uColor;
+                        void main() {
+                            if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+                            gl_FragColor = vec4(uColor, 1.0);
+                        }
+                    `}
+                />
+            </points>
+        );
+    }
 
     return (
         <group position={logoPos}>
             <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
                 <sphereGeometry args={[0.01, 8, 8]} />
-                <meshStandardMaterial
-                    emissive="#ffffff"
-                    emissiveIntensity={3}
-                    toneMapped={false}
-                />
+                <meshStandardMaterial emissive="#ffffff" emissiveIntensity={3} toneMapped={false} />
             </instancedMesh>
         </group>
     );
 };
 
-const Model = ({ isActive = true }: { isActive?: boolean }) => {
+const Model = ({ isActive = true, isMobile = false }: { isActive?: boolean; isMobile?: boolean }) => {
     const { scene, animations } = useGLTF('/assets/3d/sh/sh_geo.gltf');
     const { actions } = useAnimations(animations, scene);
 
@@ -184,39 +183,37 @@ const Model = ({ isActive = true }: { isActive?: boolean }) => {
                 const name = mesh.name.toLowerCase();
 
                 if (name.startsWith('sh_logo')) {
-                    // Aluminum material
-                    mesh.material = new THREE.MeshPhysicalMaterial({
+                    // Aluminum material - Lighter version for mobile
+                    mesh.material = isMobile ? new THREE.MeshStandardMaterial({
+                        color: '#f0f0f0',
+                        metalness: 0.8,
+                        roughness: 0.2,
+                        envMapIntensity: 1.0,
+                    }) : new THREE.MeshPhysicalMaterial({
                         color: '#f0f0f0',
                         metalness: 1.0,
                         roughness: 0.1,
-                        transparent: false,
-                        opacity: 1,
                         envMapIntensity: 2.5,
                     });
-                    mesh.castShadow = true;
+                    mesh.castShadow = !isMobile;
                 } else if (name.includes('sh_background') || name.includes('sh_backdrop')) {
-                    // Dark grey floor to show the light pool
-                    mesh.material = new THREE.MeshPhysicalMaterial({
+                    mesh.material = new THREE.MeshStandardMaterial({
                         color: '#1a1a1a',
-                        metalness: 0.2,
-                        roughness: 0.8,
-                        transparent: false,
-                        opacity: 1,
-                        envMapIntensity: 0.5,
+                        metalness: 0.1,
+                        roughness: 0.9,
                     });
-                    mesh.receiveShadow = true;
+                    mesh.receiveShadow = !isMobile;
                 } else {
-                    // Default material for others
-                    mesh.material = new THREE.MeshPhysicalMaterial({
+                    mesh.material = new THREE.MeshStandardMaterial({
                         color: '#404040',
                         metalness: 0.5,
                         roughness: 0.5,
                     });
-                    mesh.receiveShadow = true;
+                    mesh.receiveShadow = !isMobile;
                 }
             }
         });
-    }, [scene]);
+    }, [scene, isMobile]);
 
     const logoRef = useRef<THREE.Group>(null);
 
@@ -274,67 +271,46 @@ const Model = ({ isActive = true }: { isActive?: boolean }) => {
     );
 };
 
-const Scene = ({ scrollY, isActive = true }: { scrollY?: MotionValue<number>; isActive?: boolean }) => {
+const Scene = ({ scrollY, isActive = true, isMobile = false }: { scrollY?: MotionValue<number>; isActive?: boolean; isMobile?: boolean }) => {
     const { cameras, scene } = useGLTF('/assets/3d/sh/sh_geo.gltf');
     const spotLightRef = useRef<THREE.SpotLight>(null);
     const ambientLightRef = useRef<THREE.AmbientLight>(null);
     const dirLightRef = useRef<THREE.DirectionalLight>(null);
 
-    // Find the camera named "sh_cam"
     const shCam = useMemo(() => {
         return cameras.find((cam) => cam.name === 'sh_cam') as THREE.PerspectiveCamera;
     }, [cameras]);
 
     const noise = useMemo(() => createNoise3D(), []);
 
-    // Find the spotlight position from "sh_spot_light" object
     const spotLightPos = useMemo(() => {
         const lightObj = scene.getObjectByName('sh_spot_light');
-        if (lightObj) {
-            return lightObj.position.clone();
-        }
-        return new THREE.Vector3(0, 15, 0);
+        return lightObj ? lightObj.position.clone() : new THREE.Vector3(0, 15, 0);
     }, [scene]);
 
     const cameraRef = useRef<THREE.PerspectiveCamera>(null);
 
-    // Noise intensity effect logic for all lights
     useFrame((state, delta) => {
         if (!isActive) return;
         const t = state.clock.getElapsedTime();
-        // Faster frequency (22 instead of 15)
-        const baseNoise = (noise(t * 22, 0, 0) + 1) / 2;
-        // Sharper power curve (1.5 instead of 1.2)
-        const powerNoise = Math.pow(baseNoise, 1.5);
 
-        // Spotlight Flicker (Deep range: 1,000 to 31,000)
-        if (spotLightRef.current) {
-            spotLightRef.current.intensity = 1000 + (powerNoise * 30000);
+        // Disable light flickering on mobile to save CPU
+        if (!isMobile) {
+            const baseNoise = (noise(t * 22, 0, 0) + 1) / 2;
+            const powerNoise = Math.pow(baseNoise, 1.5);
+
+            if (spotLightRef.current) spotLightRef.current.intensity = 1000 + (powerNoise * 30000);
+            if (ambientLightRef.current) ambientLightRef.current.intensity = 0.01 + (baseNoise * 0.15);
+            if (dirLightRef.current) dirLightRef.current.intensity = 0.1 + (baseNoise * 1.2);
         }
 
-        // Ambient Flicker (0.01 to 0.16)
-        if (ambientLightRef.current) {
-            ambientLightRef.current.intensity = 0.01 + (baseNoise * 0.15);
-        }
-
-        // Directional Flicker (0.1 to 1.3)
-        if (dirLightRef.current) {
-            dirLightRef.current.intensity = 0.1 + (baseNoise * 1.2);
-        }
-
-        // 2. Camera scroll movement logic
         if (cameraRef.current && scrollY && shCam) {
             const scrollVal = scrollY.get();
-
-            // Move BACK (increase Z) immediately from 0 scroll with higher sensitivity
-            const targetZ = shCam.position.z + (scrollVal * 0.03);
-
-            // Smoothly lerp with less delay (Frame-rate independent)
+            const targetZ = shCam.position.z + (scrollVal * (isMobile ? 0.05 : 0.03));
             const alpha = 1 - Math.exp(-8 * delta);
             cameraRef.current.position.z = THREE.MathUtils.lerp(cameraRef.current.position.z, targetZ, alpha);
 
-            // Keep X, Y and Rotation consistent with initial shCam
-            cameraRef.current.position.x = shCam.position.x + 0.2;
+            cameraRef.current.position.x = shCam.position.x + (isMobile ? 0 : 0.2);
             cameraRef.current.position.y = shCam.position.y;
             cameraRef.current.rotation.copy(shCam.rotation);
         }
@@ -343,54 +319,51 @@ const Scene = ({ scrollY, isActive = true }: { scrollY?: MotionValue<number>; is
     return (
         <>
             {shCam ? (
-                <PerspectiveCamera
-                    ref={cameraRef}
-                    makeDefault
-                    fov={shCam.fov}
-                    near={shCam.near}
-                    far={shCam.far}
-                />
+                <PerspectiveCamera ref={cameraRef} makeDefault fov={isMobile ? 65 : shCam.fov} near={shCam.near} far={shCam.far} />
             ) : (
                 <PerspectiveCamera ref={cameraRef} makeDefault position={[0, 0, 10]} fov={50} />
             )}
 
             <ambientLight ref={ambientLightRef} intensity={0.05} />
-            <directionalLight ref={dirLightRef} position={[10, 20, 10]} intensity={0.8} color="#ffffff" />
+            <directionalLight ref={dirLightRef} position={[10, 20, 10]} intensity={0.8} />
 
             <spotLight
                 ref={spotLightRef}
                 position={spotLightPos}
                 angle={1.0}
-                penumbra={1.0}
-                intensity={15000}
+                intensity={isMobile ? 5000 : 15000}
                 distance={50}
-                color="#ffffff"
-                castShadow
+                castShadow={!isMobile}
             />
-            {/* Direct downward target */}
             <primitive object={new THREE.Object3D()} attach="target" position={[spotLightPos.x, spotLightPos.y - 12, spotLightPos.z]} />
 
-            <Model isActive={isActive} />
-            <OrbitingParticles count={60} isActive={isActive} />
+            <Model isActive={isActive} isMobile={isMobile} />
+            <OrbitingParticles count={isMobile ? 25 : 60} isActive={isActive} isMobile={isMobile} />
 
-            <Environment preset="city" environmentIntensity={0.4} />
-            <fog attach="fog" args={['#000000', 5, 35]} />
+            <Environment preset="city" environmentIntensity={isMobile ? 0.2 : 0.4} />
+            {!isMobile && <fog attach="fog" args={['#000000', 5, 35]} />}
 
-            <EffectComposer disableNormalPass multisampling={0}>
-                <Bloom
-                    luminanceThreshold={1}
-                    mipmapBlur={!/firefox/i.test(navigator.userAgent)} // Disable heavy blur on Firefox
-                    intensity={0.2}
-                    radius={0.4}
-                />
-                <Noise opacity={0.015} />
-                <Vignette eskil={false} offset={0.1} darkness={1.1} />
-            </EffectComposer>
+            {!isMobile && (
+                <EffectComposer enableNormalPass={false} multisampling={0}>
+                    <Bloom luminanceThreshold={1} mipmapBlur intensity={0.2} radius={0.4} />
+                    <Noise opacity={0.015} />
+                    <Vignette eskil={false} offset={0.1} darkness={1.1} />
+                </EffectComposer>
+            )}
         </>
     );
 };
 
 const HeroCanvas: React.FC<{ scrollY?: MotionValue<number> }> = ({ scrollY }) => {
+    const [isMobile, setIsMobile] = React.useState(false);
+
+    React.useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
     const fallbackScroll = useMotionValue(0);
     const s = scrollY || fallbackScroll;
 
@@ -404,9 +377,7 @@ const HeroCanvas: React.FC<{ scrollY?: MotionValue<number> }> = ({ scrollY }) =>
         }
     });
 
-    // Fade out canvas after user scrolls past the first section
     const opacity = useTransform(s, [600, 1200], [1, 0]);
-
     const isFirefox = /firefox/i.test(navigator.userAgent);
 
     return (
@@ -418,17 +389,18 @@ const HeroCanvas: React.FC<{ scrollY?: MotionValue<number> }> = ({ scrollY }) =>
             className="fixed inset-0 z-0 pointer-events-none overflow-hidden h-screen w-full"
         >
             <Canvas
-                shadows={!isFirefox} // Disable shadows on Firefox for better perf if needed
-                dpr={isFirefox ? 1 : [1, 2]} // Lower DPR on Firefox to reduce fill rate issues
+                shadows={!isFirefox && !isMobile}
+                dpr={isMobile ? 1 : (isFirefox ? 1 : [1, 2])}
                 gl={{
-                    antialias: false, // Performance: Postprocessing usually handles its own AA
+                    antialias: false,
                     toneMapping: THREE.ACESFilmicToneMapping,
                     powerPreference: "high-performance",
                     stencil: false,
-                    depth: true
+                    depth: true,
+                    alpha: true
                 }}
             >
-                <Scene scrollY={s} isActive={isActive} />
+                <Scene scrollY={s} isActive={isActive} isMobile={isMobile} />
             </Canvas>
         </motion.div>
     );
