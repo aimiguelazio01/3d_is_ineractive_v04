@@ -4,7 +4,7 @@ import { useGLTF, PerspectiveCamera, Environment, useTexture, Float } from '@rea
 import { motion, AnimatePresence } from 'framer-motion';
 import * as THREE from 'three';
 
-const MorphParticles = ({ isTargeted, targetId }: { isTargeted: boolean, targetId: string }) => {
+const MorphParticles = ({ isTargeted, targetId, isMobile }: { isTargeted: boolean, targetId: string, isMobile: boolean }) => {
     const { scene, nodes } = useGLTF('/assets/3d/s01/morph_particles.gltf');
     const pointsRef = useRef<THREE.Points>(null);
     const materialRef = useRef<THREE.ShaderMaterial>(null);
@@ -241,8 +241,8 @@ const MorphParticles = ({ isTargeted, targetId }: { isTargeted: boolean, targetI
 
 };
 
-const TrailParticles = () => {
-    const count = 400; // Increased density
+const TrailParticles = ({ isMobile }: { isMobile: boolean }) => {
+    const count = isMobile ? 150 : 400; // Significantly reduced for mobile
     const meshRef = useRef<THREE.Points>(null);
     const materialRef = useRef<THREE.ShaderMaterial>(null);
 
@@ -373,7 +373,7 @@ const TrailParticles = () => {
     );
 };
 
-const CardItem = ({ card, onHoverChange, onClick }: { card: any, onHoverChange?: (hovered: boolean) => void, onClick?: () => void }) => {
+const CardItem = ({ card, onHoverChange, onClick, isMobile }: { card: any, onHoverChange?: (hovered: boolean) => void, onClick?: () => void, isMobile: boolean }) => {
     const groupRef = useRef<THREE.Group>(null);
     const dummy = useMemo(() => new THREE.Object3D(), []);
     const [isHovered, setIsHovered] = useState(false);
@@ -417,22 +417,33 @@ const CardItem = ({ card, onHoverChange, onClick }: { card: any, onHoverChange?:
             {/* Transparent plane for interaction - slightly larger than visual for ease of use */}
             <mesh
                 onPointerOver={(e) => {
+                    if (isMobile) return;
                     e.stopPropagation();
                     setIsHovered(true);
                     if (card.material) card.material.opacity = 1.0;
                     onHoverChange?.(true);
                 }}
                 onPointerOut={() => {
+                    if (isMobile) return;
                     setIsHovered(false);
                     if (card.material) card.material.opacity = 0.85;
                     onHoverChange?.(false);
+                }}
+                onPointerDown={(e) => {
+                    if (!isMobile) return;
+                    e.stopPropagation();
+                    // Toggle hover state on mobile touch
+                    const newHover = !isHovered;
+                    setIsHovered(newHover);
+                    if (card.material) card.material.opacity = newHover ? 1.0 : 0.85;
+                    onHoverChange?.(newHover);
                 }}
                 onClick={(e) => {
                     e.stopPropagation();
                     onClick?.();
                 }}
             >
-                <planeGeometry args={[card.size.x * 1.5, card.size.y * 1.5]} />
+                <planeGeometry args={[card.size.x * (isMobile ? 2.0 : 1.5), card.size.y * (isMobile ? 2.0 : 1.5)]} />
                 <meshBasicMaterial transparent opacity={0} />
             </mesh>
 
@@ -445,7 +456,7 @@ const CardItem = ({ card, onHoverChange, onClick }: { card: any, onHoverChange?:
     );
 };
 
-const Model = ({ textures }: { textures: any }) => {
+const Model = ({ textures, isMobile }: { textures: any, isMobile: boolean }) => {
     const { scene } = useGLTF('/assets/3d/s01/morph_particles.gltf');
     const [cardUnits, setCardUnits] = useState<{
         id: string,
@@ -552,8 +563,9 @@ const Model = ({ textures }: { textures: any }) => {
             <MorphParticles
                 isTargeted={!!stickyTargetId}
                 targetId={lastActiveId}
+                isMobile={isMobile}
             />
-            <TrailParticles />
+            <TrailParticles isMobile={isMobile} />
             <Float
                 speed={2}
                 rotationIntensity={0.5}
@@ -574,6 +586,7 @@ const Model = ({ textures }: { textures: any }) => {
                             <CardItem
                                 key={card.id}
                                 card={card}
+                                isMobile={isMobile}
                                 onHoverChange={(hovered) => {
                                     if (hovered) {
                                         setActiveHoverId(card.id);
@@ -593,7 +606,7 @@ const Model = ({ textures }: { textures: any }) => {
     );
 };
 
-const Content = () => {
+const Content = ({ isMobile }: { isMobile: boolean }) => {
     const { cameras } = useGLTF('/assets/3d/s01/morph_particles.gltf');
     const textures = useTexture({
         card_01: '/assets/images/s01_button_01.png',
@@ -624,20 +637,20 @@ const Content = () => {
             {cam1 ? (
                 <PerspectiveCamera
                     makeDefault
-                    position={[cam1.position.x, cam1.position.y, cam1.position.z]}
+                    position={[cam1.position.x, cam1.position.y, cam1.position.z * (isMobile ? 1.4 : 1.0)]}
                     rotation={[cam1.rotation.x, cam1.rotation.y, cam1.rotation.z]}
-                    fov={35}
+                    fov={isMobile ? 45 : 35}
                     near={0.1}
                     far={1000}
                 />
             ) : (
-                <PerspectiveCamera makeDefault position={[0, 0, 15]} fov={35} />
+                <PerspectiveCamera makeDefault position={[0, 0, isMobile ? 20 : 15]} fov={isMobile ? 45 : 35} />
             )}
 
             <ambientLight intensity={1.5} />
             <pointLight position={[10, 10, 10]} intensity={2.5} />
             <React.Suspense fallback={null}>
-                <Model textures={textures} />
+                <Model textures={textures} isMobile={isMobile} />
             </React.Suspense>
             <Environment preset="night" />
         </>
@@ -645,6 +658,15 @@ const Content = () => {
 };
 
 const Section01Background3D: React.FC<{ isActive: boolean }> = ({ isActive }) => {
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
     return (
         <AnimatePresence>
             {isActive && (
@@ -658,15 +680,22 @@ const Section01Background3D: React.FC<{ isActive: boolean }> = ({ isActive }) =>
                         position: 'absolute',
                         inset: 0,
                         zIndex: 0,
-                        pointerEvents: 'auto'
+                        pointerEvents: 'auto',
+                        touchAction: 'none'
                     }}
                 >
                     <Canvas
-                        gl={{ antialias: true, alpha: true }}
+                        gl={{
+                            antialias: true,
+                            alpha: true,
+                            powerPreference: "high-performance"
+                        }}
+                        dpr={[1, 2]}
+                        camera={{ fov: isMobile ? 45 : 35 }}
                         style={{ pointerEvents: 'auto' }}
                     >
                         <React.Suspense fallback={null}>
-                            <Content />
+                            <Content isMobile={isMobile} />
                         </React.Suspense>
                     </Canvas>
                 </motion.div>
