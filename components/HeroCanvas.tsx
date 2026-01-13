@@ -185,25 +185,26 @@ const Model = ({ isActive = true, isMobile = false }: { isActive?: boolean; isMo
                 const name = mesh.name.toLowerCase();
 
                 if (name.startsWith('sh_logo')) {
-                    // Aluminum material - Balanced for mobile quality
+                    // Aluminum material - High Quality
                     mesh.material = new THREE.MeshPhysicalMaterial({
-                        color: '#f0f0f0',
+                        color: '#ffffff',
                         metalness: 1.0,
-                        roughness: isMobile ? 0.2 : 0.1,
-                        envMapIntensity: isMobile ? 1.5 : 2.5,
-                        clearcoat: isMobile ? 0 : 0.5, // Save some perf on mobile
+                        roughness: isMobile ? 0.15 : 0.05,
+                        envMapIntensity: isMobile ? 2.0 : 2.5,
+                        clearcoat: 0.5,
+                        clearcoatRoughness: 0.1,
                     });
                     mesh.castShadow = !isMobile;
                 } else if (name.includes('sh_background') || name.includes('sh_backdrop')) {
                     mesh.material = new THREE.MeshStandardMaterial({
-                        color: '#1a1a1a',
-                        metalness: 0.1,
-                        roughness: 0.9,
+                        color: '#0a0a0a',
+                        metalness: 0.2,
+                        roughness: 0.8,
                     });
                     mesh.receiveShadow = !isMobile;
                 } else {
                     mesh.material = new THREE.MeshStandardMaterial({
-                        color: '#404040',
+                        color: '#222222',
                         metalness: 0.5,
                         roughness: 0.5,
                     });
@@ -336,18 +337,21 @@ const Scene = ({ scrollY, isActive = true, isMobile = false }: { scrollY?: Motio
             <primitive object={new THREE.Object3D()} attach="target" position={[spotLightPos.x, spotLightPos.y - 12, spotLightPos.z]} />
 
             <Model isActive={isActive} isMobile={isMobile} />
-            <OrbitingParticles count={isMobile ? 35 : 60} isActive={isActive} isMobile={isMobile} />
+            <OrbitingParticles count={isMobile ? 50 : 60} isActive={isActive} isMobile={isMobile} />
 
-            <Environment preset="city" environmentIntensity={isMobile ? 0.35 : 0.4} />
+            <Environment preset="city" environmentIntensity={isMobile ? 0.6 : 0.4} />
             {!isMobile && <fog attach="fog" args={['#000000', 5, 35]} />}
 
-            {!isMobile && (
-                <EffectComposer enableNormalPass={false} multisampling={0}>
-                    <Bloom luminanceThreshold={1} mipmapBlur intensity={0.2} radius={0.4} />
-                    <Noise opacity={0.015} />
-                    <Vignette eskil={false} offset={0.1} darkness={1.1} />
-                </EffectComposer>
-            )}
+            <EffectComposer enableNormalPass={false} multisampling={isMobile ? 0 : 4}>
+                <Bloom
+                    luminanceThreshold={1}
+                    mipmapBlur
+                    intensity={isMobile ? 0.15 : 0.2}
+                    radius={0.4}
+                />
+                {!isMobile && <Noise opacity={0.015} />}
+                <Vignette eskil={false} offset={0.1} darkness={1.1} />
+            </EffectComposer>
         </>
     );
 };
@@ -388,9 +392,9 @@ const HeroCanvas: React.FC<{ scrollY?: MotionValue<number> }> = ({ scrollY }) =>
         >
             <Canvas
                 shadows={!isFirefox && !isMobile}
-                dpr={isMobile ? [1, 1.5] : (isFirefox ? 1 : [1, 2])}
+                dpr={isMobile ? Math.min(window.devicePixelRatio, 2) : (isFirefox ? 1 : [1, 2])}
                 gl={{
-                    antialias: true, // Back to true for smooth edges
+                    antialias: true,
                     toneMapping: THREE.ACESFilmicToneMapping,
                     powerPreference: "high-performance",
                     stencil: false,
